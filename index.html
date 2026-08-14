@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Line Checker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Scrollbar for better dark theme integration */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937; /* Tailwind gray-800 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563; /* Tailwind gray-600 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* Tailwind gray-500 */
+        }
+        
+        /* Ensure the output container preserves line breaks precisely as they are */
+        .preserve-whitespace {
+            white-space: pre-wrap; /* Preserve spaces and line breaks, wrap text if too long */
+            word-break: break-all; /* Break long words if necessary */
+        }
+        
+        /* Class added for disabling word wrap */
+        .no-wrap-text {
+            white-space: pre; /* No wrapping, keeps text in a single horizontal line */
+        }
+    </style>
+</head>
+<body class="bg-black text-gray-200 min-h-screen font-sans p-4 md:p-8 flex flex-col items-center">
+
+    <div class="max-w-4xl w-full space-y-6">
+        <header class="text-center">
+            <h1 class="text-3xl font-bold text-white mb-2">Text Line Checker</h1>
+            <p class="text-gray-400 text-sm">Paste your text or code below to see its true line structure. If it was written on a single line, it will display on a single line here.</p>
+        </header>
+
+        <main class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Input Area -->
+            <div class="flex flex-col space-y-2">
+                <label for="inputText" class="text-sm font-semibold text-gray-300">Paste Text/Code Here:</label>
+                <!-- 
+                    Using a textarea because it natively supports multiline input.
+                    We use w-full and h-64 to give it decent size.
+                    bg-gray-900 gives a dark input box.
+                -->
+                <textarea id="inputText" class="w-full h-64 bg-gray-900 border border-gray-700 rounded-lg p-4 text-gray-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-y font-mono text-sm shadow-inner transition-colors duration-200" placeholder="Paste something here..."></textarea>
+                
+                <div class="flex justify-between items-center mt-2">
+                    <div class="space-x-2 flex">
+                        <button id="clearBtn" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-medium transition-colors shadow-md">Clear</button>
+                        <button id="wrapBtn" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white rounded-md text-sm font-medium transition-colors shadow-md">Disable Wrap</button>
+                        <button id="spaceBtn" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white rounded-md text-sm font-medium transition-colors shadow-md">Show Spaces</button>
+                    </div>
+                    <span id="lineCount" class="text-xs text-gray-500 font-mono">Lines: 0</span>
+                </div>
+            </div>
+
+            <!-- Output Area -->
+            <div class="flex flex-col space-y-2">
+                <label class="text-sm font-semibold text-gray-300">Result (True Structure):</label>
+                <!-- 
+                    This div will display the output. 
+                    The 'preserve-whitespace' class (white-space: pre-wrap) is crucial here. 
+                    It forces the browser to render line breaks EXACTLY as they are in the text content.
+                -->
+                <div class="w-full h-64 bg-gray-900 border border-gray-700 rounded-lg p-4 overflow-auto shadow-inner relative">
+                    <div id="outputText" class="preserve-whitespace font-mono text-sm text-gray-300 w-full h-full"></div>
+                    
+                    <!-- Placeholder when empty -->
+                    <div id="outputPlaceholder" class="absolute inset-0 flex items-center justify-center text-gray-600 italic pointer-events-none">
+                        Output will appear here...
+                    </div>
+                </div>
+                
+                 <div class="mt-2 text-xs text-gray-500 flex items-center justify-end h-8">
+                     <!-- Info badge about the display mode -->
+                    <span class="bg-gray-800 px-2 py-1 rounded border border-gray-700 text-gray-400">Display: `pre-wrap`</span>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const inputText = document.getElementById('inputText');
+            const outputText = document.getElementById('outputText');
+            const outputPlaceholder = document.getElementById('outputPlaceholder');
+            const clearBtn = document.getElementById('clearBtn');
+            const wrapBtn = document.getElementById('wrapBtn');
+            const spaceBtn = document.getElementById('spaceBtn');
+            const lineCountDisplay = document.getElementById('lineCount');
+            let isWrapEnabled = true;
+            let isSpaceVisible = false;
+
+            // Helper function to escape HTML to prevent XSS when using innerHTML
+            function escapeHTML(str) {
+                return str.replace(/[&<>'"]/g, 
+                    tag => ({
+                        '&': '&amp;',
+                        '<': '&lt;',
+                        '>': '&gt;',
+                        "'": '&#39;',
+                        '"': '&quot;'
+                    }[tag] || tag)
+                );
+            }
+
+            // Function to update the output based on input
+            function updateOutput() {
+                const text = inputText.value;
+                
+                if (text === '') {
+                    outputText.innerHTML = '';
+                    outputPlaceholder.style.display = 'flex';
+                    lineCountDisplay.textContent = `Lines: 0`;
+                    return;
+                }
+
+                outputPlaceholder.style.display = 'none';
+                
+                // Count lines and find where 'Enter' was pressed (Handles Windows \r\n, Linux \n, Mac \r)
+                const linesArray = text.split(/\r\n|\n|\r/);
+                
+                // Process each line: escape raw text and add a golden arrow at the end of lines with 'Enter'
+                const formattedHTML = linesArray.map((line, index) => {
+                    let escapedLine = escapeHTML(line);
+                    
+                    // Agar "Show Spaces" button ON hai, toh spaces aur tabs ko dikhayein
+                    if (isSpaceVisible) {
+                        // Lagatar spaces ka group banakar unhe clickable banana
+                        escapedLine = escapedLine.replace(/ +/g, (match) => {
+                            const count = match.length;
+                            const dots = '&middot;'.repeat(count);
+                            return `<span class="space-group text-gray-500 font-bold select-none cursor-pointer hover:text-blue-400 transition-colors" data-count="${count}" data-original="${dots}" title="Click to count spaces">${dots}</span>`;
+                        });
+                        
+                        // Har ek tab ko bhi group karke clickable banana
+                        escapedLine = escapedLine.replace(/\t+/g, (match) => {
+                            const count = match.length;
+                            const arrows = '&rarr;   '.repeat(count);
+                            return `<span class="tab-group text-gray-500 font-bold select-none cursor-pointer hover:text-blue-400 transition-colors" data-count="${count}" data-original="${arrows}" title="Click to count tabs">${arrows}</span>`;
+                        });
+                    }
+
+                    // If it's not the last line, it means there was a newline character (Enter) here.
+                    if (index < linesArray.length - 1) {
+                        return escapedLine + '<span class="text-[#FFD700] font-extrabold mx-1 text-lg select-none" title="Enter Pressed">↵</span>';
+                    }
+                    return escapedLine;
+                }).join('\n'); // Join with \n to maintain the pre-wrap formatting
+
+                // Set HTML instead of textContent to render the arrow span
+                outputText.innerHTML = formattedHTML;
+                
+                lineCountDisplay.textContent = `Lines: ${linesArray.length}`;
+            }
+
+            // Listen for any input changes in the textarea
+            // 'input' event fires immediately on typing, pasting, deleting, etc.
+            inputText.addEventListener('input', updateOutput);
+
+            // Clear button functionality
+            clearBtn.addEventListener('click', () => {
+                inputText.value = '';
+                updateOutput(); // Trigger the update to clear output and reset counts
+                inputText.focus(); // Bring focus back to input for convenience
+            });
+
+            // Wrap toggle functionality
+            wrapBtn.addEventListener('click', () => {
+                isWrapEnabled = !isWrapEnabled;
+                
+                if (isWrapEnabled) {
+                    // Turn WRAP ON (Fold long lines)
+                    outputText.classList.remove('no-wrap-text');
+                    outputText.classList.add('preserve-whitespace');
+                    
+                    inputText.style.whiteSpace = 'pre-wrap';
+                    inputText.setAttribute('wrap', 'soft');
+
+                    wrapBtn.textContent = 'Disable Wrap';
+                    wrapBtn.classList.replace('bg-blue-600', 'bg-gray-700');
+                    wrapBtn.classList.replace('hover:bg-blue-500', 'hover:bg-gray-600');
+                } else {
+                    // Turn WRAP OFF (Keep in one straight line)
+                    outputText.classList.remove('preserve-whitespace');
+                    outputText.classList.add('no-wrap-text');
+                    
+                    inputText.style.whiteSpace = 'pre';
+                    inputText.setAttribute('wrap', 'off');
+                    
+                    wrapBtn.textContent = 'Enable Wrap';
+                    wrapBtn.classList.replace('bg-gray-700', 'bg-blue-600');
+                    wrapBtn.classList.replace('hover:bg-gray-600', 'hover:bg-blue-500');
+                }
+            });
+
+            // Space visibility toggle functionality
+            spaceBtn.addEventListener('click', () => {
+                isSpaceVisible = !isSpaceVisible;
+                
+                if (isSpaceVisible) {
+                    // Turn Spaces Visible
+                    spaceBtn.textContent = 'Hide Spaces';
+                    spaceBtn.classList.replace('bg-gray-700', 'bg-blue-600');
+                    spaceBtn.classList.replace('hover:bg-gray-600', 'hover:bg-blue-500');
+                } else {
+                    // Turn Spaces Hidden
+                    spaceBtn.textContent = 'Show Spaces';
+                    spaceBtn.classList.replace('bg-blue-600', 'bg-gray-700');
+                    spaceBtn.classList.replace('hover:bg-blue-500', 'hover:bg-gray-600');
+                }
+                updateOutput(); // Output ko naye format ke hisab se update karein
+            });
+
+            // Dots par click karne par count dikhane ka logic
+            outputText.addEventListener('click', (e) => {
+                // Check if user clicked on our space or tab groups
+                const group = e.target.closest('.space-group, .tab-group');
+                if (!group) return;
+
+                const isShowingCount = group.getAttribute('data-showing-count') === 'true';
+                
+                if (isShowingCount) {
+                    // Wapas dots ya arrows dikhayein
+                    group.innerHTML = group.getAttribute('data-original');
+                    group.setAttribute('data-showing-count', 'false');
+                } else {
+                    // Number (count) badge dikhayein
+                    const count = group.getAttribute('data-count');
+                    const isTab = group.classList.contains('tab-group');
+                    const label = isTab ? 'Tabs' : 'Spaces';
+                    
+                    group.innerHTML = `<span class="inline-block px-1.5 py-0.5 mx-1 bg-blue-900/90 text-blue-200 text-xs rounded border border-blue-700 font-sans tracking-normal shadow-sm">${count} ${label}</span>`;
+                    group.setAttribute('data-showing-count', 'true');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
